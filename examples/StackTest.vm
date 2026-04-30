@@ -1,0 +1,56 @@
+// StackTest.vm
+// Tests all stack-arithmetic VM commands.
+// Mirrors the Nand2Tetris Project 07 StackTest.
+
+push constant 17
+push constant 17
+eq      // -1 (true)
+
+push constant 17
+push constant 16
+eq      //  0 (false)
+
+push constant 16
+push constant 17
+eq      //  0 (false)
+
+push constant 892
+push constant 891
+gt      // -1 (true)
+
+push constant 891
+push constant 892
+gt      //  0 (false)
+
+push constant 891
+push constant 891
+gt      //  0 (false)
+
+push constant 57
+push constant 31
+lt      //  0 (false)
+
+push constant 31
+push constant 57
+lt      // -1 (true)
+
+push constant 31
+push constant 31
+lt      //  0 (false)
+
+push constant 5
+push constant 3
+add     // 8
+
+push constant 2
+sub     // 6
+
+neg     // -6
+
+push constant 6
+and     // 6 & -6  (bitwise)
+
+push constant 82
+or      // bitwise or
+
+not     // bitwise not

@@ -1,0 +1,263 @@
+// MAC.vm  —  Matrix Multiply-Accumulate (MAC) Library
+// Implements Y = W · X + B for 2×2 matrices stored in RAM.
+//
+// Memory layout (example, base addresses configurable):
+//   W[0..3]  at RAM[100..103]   (row-major: W[i][j] = RAM[100 + 2*i + j])
+//   X[0..3]  at RAM[200..203]
+//   B[0..1]  at RAM[300..301]   (bias vector, one entry per output row)
+//   Y[0..3]  at RAM[400..403]   (output, written by MAC.matmul)
+//
+// Public functions
+//   MAC.rowxcol  (row_ptr, col_ptr, col_stride, length) -> dot_product
+//   MAC.matmul   (w_ptr, x_ptr, b_ptr, rows, cols, inner) -> y_ptr
+//   Main.run     ()  -> 0   (wires up the demo and calls matmul)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// function MAC.rowxcol  (Approach B subroutine)
+// args: argument 0 = row_ptr   (base address of a row in W)
+//       argument 1 = col_ptr   (base address of a column in X, already strided)
+//       argument 2 = col_stride (number of columns in X, used to step col_ptr)
+//       argument 3 = length    (inner dimension)
+// returns: dot product (integer)
+// ─────────────────────────────────────────────────────────────────────────────
+function MAC.rowxcol 4
+    // local 0 = accumulator (sum)
+    // local 1 = loop counter (k)
+    // local 2 = current row element address
+    // local 3 = current col element address
+
+    push constant 0
+    pop local 0          // sum = 0
+
+    push argument 0
+    pop local 2          // cur_row_ptr = row_ptr
+
+    push argument 1
+    pop local 3          // cur_col_ptr = col_ptr
+
+    push constant 0
+    pop local 1          // k = 0
+
+label ROWXCOL_LOOP
+    // if k >= length → exit
+    push local 1
+    push argument 3
+    lt
+    not
+    if-goto ROWXCOL_END
+
+    // sum += RAM[cur_row_ptr] * RAM[cur_col_ptr]
+    // (Hack has no MUL; we call a helper)
+    push local 2
+    // dereference: push the VALUE at address stored in local 2
+    // We do:  push *cur_row_ptr  via pointer trick
+    pop pointer 1        // THAT = cur_row_ptr address
+    push that 0          // D = RAM[cur_row_ptr]
+
+    push local 3
+    pop pointer 1
+    push that 0          // D = RAM[cur_col_ptr]
+
+    call MAC.multiply 2  // returns a*b
+    pop temp 0           // store product in temp 0
+
+    push local 0
+    push temp 0
+    add
+    pop local 0          // sum += product
+
+    // advance row pointer by 1 (next column in same row)
+    push local 2
+    push constant 1
+    add
+    pop local 2
+
+    // advance col pointer by col_stride (next row, same column)
+    push local 3
+    push argument 2
+    add
+    pop local 3
+
+    push local 1
+    push constant 1
+    add
+    pop local 1          // k++
+
+    goto ROWXCOL_LOOP
+
+label ROWXCOL_END
+    push local 0         // return sum
+    return
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// function MAC.multiply  — integer multiplication via repeated addition
+// args: argument 0 = a,  argument 1 = b
+// returns: a * b
+// ─────────────────────────────────────────────────────────────────────────────
+function MAC.multiply 3
+    // local 0 = result
+    // local 1 = counter
+    // local 2 = absolute value of b (we add |b| times, fix sign after)
+
+    push constant 0
+    pop local 0          // result = 0
+
+    // handle sign: if b < 0, negate b and remember to negate result
+    push argument 1
+    push constant 0
+    lt
+    if-goto MUL_NEG_B
+
+    push argument 1
+    pop local 2
+    push constant 0
+    pop local 1          // counter = 0
+
+    goto MUL_LOOP_POS
+
+label MUL_NEG_B
+    push argument 1
+    neg
+    pop local 2          // local 2 = |b|
+    push constant 0
+    pop local 1
+
+label MUL_LOOP_POS
+    // while counter < |b|: result += a
+    push local 1
+    push local 2
+    lt
+    not
+    if-goto MUL_DONE
+
+    push local 0
+    push argument 0
+    add
+    pop local 0
+
+    push local 1
+    push constant 1
+    add
+    pop local 1
+    goto MUL_LOOP_POS
+
+label MUL_DONE
+    // if original b < 0, negate result
+    push argument 1
+    push constant 0
+    lt
+    if-goto MUL_NEGATE
+
+    push local 0
+    return
+
+label MUL_NEGATE
+    push local 0
+    neg
+    return
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// function MAC.matmul  (Approach A — single function call)
+// args: argument 0 = w_ptr    (base address of W)
+//       argument 1 = x_ptr    (base address of X)
+//       argument 2 = b_ptr    (base address of B, bias vector)
+//       argument 3 = rows     (rows of W = rows of Y)
+//       argument 4 = cols     (cols of X = cols of Y)
+//       argument 5 = inner    (cols of W = rows of X)
+// returns: y_ptr (base address of output; we use a fixed scratch area RAM[400])
+// ─────────────────────────────────────────────────────────────────────────────
+function MAC.matmul 5
+    // local 0 = i  (row index)
+    // local 1 = j  (col index)
+    // local 2 = y_ptr (output base, fixed at 400)
+    // local 3 = row_ptr (pointer to start of W row i)
+    // local 4 = col_ptr (pointer to start of X col j)
+
+    push constant 400
+    pop local 2          // y_ptr = 400
+
+    push constant 0
+    pop local 0          // i = 0
+
+label MATMUL_ROW_LOOP
+    // if i >= rows → done
+    push local 0
+    push argument 3
+    lt
+    not
+    if-goto MATMUL_END
+
+    push constant 0
+    pop local 1          // j = 0
+
+    // row_ptr = w_ptr + i * inner
+    push argument 0
+    push local 0
+    push argument 5
+    call MAC.multiply 2
+    add
+    pop local 3
+
+label MATMUL_COL_LOOP
+    // if j >= cols → next row
+    push local 1
+    push argument 4
+    lt
+    not
+    if-goto MATMUL_NEXT_ROW
+
+    // col_ptr = x_ptr + j  (column j starts at x_ptr + j; stride = cols)
+    push argument 1
+    push local 1
+    add
+    pop local 4
+
+    // dot = MAC.rowxcol(row_ptr, col_ptr, cols_X, inner)
+    push local 3          // row_ptr
+    push local 4          // col_ptr
+    push argument 4       // col_stride = cols of X
+    push argument 5       // length = inner
+    call MAC.rowxcol 4
+    pop temp 0            // temp 0 = dot product
+
+    // add bias B[i]
+    push argument 2       // b_ptr
+    push local 0          // i
+    add
+    pop pointer 1         // THAT = b_ptr + i
+    push that 0           // D = B[i]
+
+    push temp 0
+    add
+    pop temp 1            // Y[i][j] = dot + B[i]
+
+    // store result: Y[i*cols + j] = temp 1
+    push local 2          // y_ptr = 400
+    push local 0
+    push argument 4
+    call MAC.multiply 2   // i * cols
+    add
+    push local 1
+    add                   // y_ptr + i*cols + j
+    pop pointer 1
+    push temp 1
+    pop that 0            // RAM[y_ptr + i*cols + j] = result
+
+    push local 1
+    push constant 1
+    add
+    pop local 1           // j++
+    goto MATMUL_COL_LOOP
+
+label MATMUL_NEXT_ROW
+    push local 0
+    push constant 1
+    add
+    pop local 0           // i++
+    goto MATMUL_ROW_LOOP
+
+label MATMUL_END
+    push local 2          // return y_ptr (400)
+    return

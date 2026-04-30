@@ -1,0 +1,8 @@
+// Sys.vm  —  Bootstrap entry point for MatrixMAC bundle
+// Calls the top-level Main.run function which sets up matrices and triggers MAC.
+
+function Sys.init 0
+    call Main.run 0
+    pop temp 0           // discard return value
+label INFINITE_LOOP
+    goto INFINITE_LOOP

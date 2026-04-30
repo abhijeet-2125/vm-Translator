@@ -1,0 +1,7 @@
+// SimpleAdd.vm
+// Computes: 7 + 8, leaves result (15) at top of stack.
+// Tests: push constant, add
+
+push constant 7
+push constant 8
+add
